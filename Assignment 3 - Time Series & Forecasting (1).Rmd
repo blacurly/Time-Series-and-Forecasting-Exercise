@@ -1,0 +1,213 @@
+---
+title: "Assignment 3 - Time Series and Forecasting"
+author: "Faransina (Olivia) Rumere"
+date: "2025-01-31"
+output:
+  html_document:
+    df_print: paged
+---
+
+##### Install necessary package
+```{r}
+library(fpp3)
+library(ggplot2)
+library(forecast)
+set.seed(2025)
+```
+
+### Part 1  3.7 Consider the last five years of the Gas data from aus_production.
+
+Change one observation to be an outlier (e.g., add 300 to one observation), and recompute the seasonally adjusted data. What is the effect of the outlier?
+Does it make any difference if the outlier is near the end rather than in the middle of the time series?
+
+```{r}
+#Load the data
+data(aus_production)
+gas <- tail(aus_production, 5*4) |> select(Gas)
+```
+
+#### a) Plot the time series. Can you identify seasonal fluctuations and/or a trend-cycle?
+```{r}
+autoplot(gas) +
+  labs(title = "Gas Production",
+       y = "Gas")
+```
+
+The plot shows seasonality, since gas production follows a repeating pattern within a fixed time period, likely every year. The peaks and dips occur at similar points in each year, this may indicate a seasonal effect.
+
+#### b) Use classical_decomposition with type=multiplicative to calculate the trend-cycle and seasonal indices.
+```{r}
+gas |>
+  model(
+    classical_decomposition(Gas, type = "multiplicative")
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "Classical Multiplicative Decomposition of Gas Production",
+       y = "Gas")
+```
+
+The trend plot shows a gradual increase over time, it tell us that gas production is generally rising.
+The seasonal plot follows a repeating pattern, meaning there are predictable fluctuations within each year.
+The random plot show a random variations that do not follow the trend or seasonality.
+
+#### c) Do the results support the graphical interpretation from part a?
+Yes, it does. The plot in part (b) provides decomposition analysis, which helps us break down the components seen in the first plot. It confirms that gas production follows a seasonal pattern with an increasing trend, it strengthening our initial observaiton in aprt (a).
+
+#### d) Compute and plot the seasonally adjusted data.
+```{r}
+gas_stl <- gas |> model(STL(Gas ~ season(window = "periodic")))
+gas_adjusted <- components(gas_stl) |> mutate(Seasonally_Adjusted = trend + remainder)
+
+autoplot(gas_adjusted, Seasonally_Adjusted) +
+  labs(title = "Seasonally Adjusted Gas Production",
+       y = "Gas (Adjusted)")
+```
+
+The plot above shows the seasonally adjusted gas production, show a clear increase trend over time without seasonal fluctuations.
+
+#### e) Change one observation to be an outlier (e.g., add 300 to one observation), and recompute the seasonally adjusted data. What is the effect of the outlier?
+```{r}
+#Since gas production lies in the range 100 - 300, so we change observation 10 with value 700 in this case to make it outlier (Middle of time series)
+gas_outlier <- gas
+gas_outlier$Gas[10] <- gas_outlier$Gas[10] + 700  
+
+gas_decomp_outlier <- gas_outlier |>
+  model(classical_decomposition(Gas, type = "multiplicative")) |>
+  components()
+gas_adjusted_outlier <- gas_decomp_outlier |>
+  mutate(Seasonally_Adjusted = Gas / seasonal)
+
+autoplot(gas_adjusted_outlier, Seasonally_Adjusted) +
+  labs(title = "Seasonally Adjusted Gas Production (With Outlier in the mid of series)",
+       y = "Gas (Adjusted)")
+
+#We change observation 19 with value 700 in this case to make it outlier (Near end of time series)
+gas_outlier1 <- gas
+gas_outlier1$Gas[19] <- gas_outlier1$Gas[19] + 700  
+
+gas_decomp_outlier1 <- gas_outlier1 |>
+  model(classical_decomposition(Gas, type = "multiplicative")) |>
+  components()
+gas_adjusted_outlier1 <- gas_decomp_outlier1 |>
+  mutate(Seasonally_Adjusted = Gas / seasonal)
+
+autoplot(gas_adjusted_outlier1, Seasonally_Adjusted) +
+  labs(title = "Seasonally Adjusted Gas Production (With Outlier near end of series)",
+       y = "Gas (Adjusted)")
+```
+
+The 2 plots above shows seasonally adjusted gas production with an outlier, where one spike makes the trend look not that smooth and changes the overall pattern significantly than plot in part (d). 
+
+#### f) Does it make any difference if the outlier is near the end rather than in the middle of the time series?
+Yes, it does make different. an outlier in the middle of the time series affects past and future values temporarily since after spike it return to normal. However, an outlier at the end can bias forecasts and long-term trends more strongly and make it hard to see th upcoming pattern.
+
+### Part 2 10.2
+Repeat Exercise 4 from Section 7.10, but this time adding in ARIMA errors to address the autocorrelations in the residuals.
+
+```{r}
+# Load necessary libraries
+library(forecast)
+library(ggplot2)
+library(broom)
+
+#Load data & do the Log Transformation
+data("souvenirs")
+souvenirs_ts <- ts(souvenirs, start = c(1987, 1), frequency = 12)
+log_sales <- log(souvenirs_ts)
+time <- as.numeric(time(log_sales))            
+month <- as.numeric(cycle(log_sales))          
+surfing_festival <- ifelse(month == 3 & time >= 1988, 1, 0)  
+
+#Model
+model_data <- data.frame(
+  log_sales = as.numeric(log_sales),
+  time = time,
+  month = factor(month),                       
+  surfing_festival = surfing_festival
+)
+```
+
+### 1) How much difference does the ARIMA error process make to the regression coefficients?
+```{r}
+# Fit TSLM/Linear Regression 
+tslm_model <- lm(log_sales ~ time + month + surfing_festival, data = model_data)
+summary(tslm_model)
+#autocorrelation check
+residuals_tslm <- residuals(tslm_model)
+ggAcf(residuals_tslm) + ggtitle("ACF of TSLM Residuals")
+Box.test(residuals_tslm, lag = 12, type = "Ljung-Box")
+```
+
+The ACF plot of TSLM residuals shows strong autocorrelation at multiple lags, this indicates that the model's residuals are not white noise and may require further refinement. When we check The Ljung-Box test, the result is p-value < 2.2e-16, which indicates a significant autocorrelation in the model residuals, this indicates that the model fails to capture some patterns in the data. This implies the model may need further refinement (probably use ARIMA, etc), such as adding lagged variables or improving the seasonal components. Thus, we continue build 2 different model which are linear regression and linear regression with ARIMA error, as below
+
+```{r}
+# Fit a regression model with ARIMA errors
+xreg <- model.matrix(~ time + month + surfing_festival, data = model_data)[, -1]
+arima_model <- auto.arima(model_data$log_sales, xreg = xreg)
+summary(arima_model)
+```
+
+In the linear regression model, the time coefficient is 0.15666, while in the ARIMA model, the coefficient is -0.3690. This shows that the direction is change after we take care the autocorrelation. Additionally, The month and surfing_festival coefficients are similar in both models, but their standard errors are smaller in the ARIMA model, it show that ARIMA model is better and reliable to use.
+
+### 2) How much difference does the ARIMA error process make to the forecasts?
+```{r}
+# Forecast with original TSLM/Linear Regression 
+future_time <- seq(1994, 1996 + 11/12, by = 1/12)  
+future_month <- rep(1:12, times = 3)             
+future_surfing_festival <- ifelse(future_month == 3, 1, 0)  
+
+future_data <- data.frame(
+  time = future_time,
+  month = factor(future_month), 
+  surfing_festival = future_surfing_festival
+)
+
+predictions <- predict(tslm_model, future_data, interval = "prediction", level = 0.95)
+
+future_data$predicted_sales <- exp(predictions[, "fit"])
+future_data$lower_bound <- exp(predictions[, "lwr"])
+future_data$upper_bound <- exp(predictions[, "upr"])
+
+print(future_data)
+```
+```{r}
+# Forecast with ARIMA error model
+future_data <- data.frame(
+  time = future_time,
+  month = factor(future_month, levels = levels(model_data$month)), 
+  surfing_festival = future_surfing_festival
+)
+
+future_xreg <- model.matrix(~ time + month + surfing_festival, data = future_data)[, -1]
+
+forecast_arima <- forecast(arima_model, xreg = future_xreg, h = length(future_time))
+
+forecast_df <- data.frame(
+  Time = future_time,
+  Predicted_Sales = exp(forecast_arima$mean),
+  Lower_Bound = exp(forecast_arima$lower[,2]),  
+  Upper_Bound = exp(forecast_arima$upper[,2])   
+)
+
+print(forecast_df)
+```
+
+When we see the forecast result between 2 models above, The ARIMA error model makes a big difference in forecasts since its prediction has higher sales values compared to the linear regression model. For example, in first period in 1994, the linear model predicts only 1,961, while the ARIMA model predicts 27,149, this show that ARIMA captures trends and seasonality better. The confidence intervals in the ARIMA model are also wider than that of linear regression.
+
+### 3) Check the residuals of the fitted model to ensure the ARIMA process has adequately addressed the autocorrelations seen in the TSLM model.
+```{r}
+residuals_arimaerror <- residuals(arima_model)
+ggAcf(residuals_arimaerror) + ggtitle("ACF of ARIMA Error Residuals")
+ljung_box_test_arima <- Box.test(residuals(arima_model), lag = 12, type = "Ljung-Box")
+print(ljung_box_test_arima)
+
+residuals_tslm <- residuals(tslm_model)
+ggAcf(residuals_tslm) + ggtitle("ACF of TSLM Residuals")
+```
+
+From the ACF plots and Box-Ljung test, we can see that the ARIMA model make the model better by reducing autocorrelation.
+
+In the Linear Regression model, the ACF plot shows strong autocorrelation at all lags and this tells us that the model does not handle time series patterns well, making its forecasts less reliable.
+
+On the other hand, the ARIMA model's ACF plot shows that most autocorrelations are close to zero, except for a spike at lag 10. The Box-Ljung test (X-squared = 91.665, p-value = 2.354e-14) still indicates some autocorrelation, but it is much lower than in the linear regression model. This means that, although there are some correlation remains, but our ARIMA model has improved the model fit by removing most of the dependency in the residuals and it more reliable for model explainability.

@@ -1,0 +1,202 @@
+---
+title: "Assignment 2 - Time Series and Forecasting"
+author: "Faransina (Olivia) Rumere"
+date: "2025-01-23"
+output:
+  html_document:
+    df_print: paged
+---
+
+##### Install necessary package
+```{r}
+library(fpp3)
+library(ggplot2)
+library(forecast)
+set.seed(2025)
+```
+
+FPP: 9.2, 9.7, and 9.15
+
+### Part 1 (9.2) A classic example of a non-stationary series are stock prices. Plot the daily closing prices for Amazon stock (contained in gafa_stock), along with the ACF and PACF. Explain how each plot shows that the series is non-stationary and should be differenced.
+
+```{r}
+data(gafa_stock)
+google_2015 <- gafa_stock |>
+  filter(Symbol == "GOOG", year(Date) == 2015)
+
+autoplot(google_2015, Close) +
+  labs(title = "Google Closing Price",
+       y = "Close")
+
+google_2015 |> ACF(Close) |>
+  autoplot() + labs(subtitle = "Google closing stock price")
+google_2015 |> ACF(difference(Close)) |>
+  autoplot() + labs(subtitle = "Changes in Google closing stock price")
+```
+First plot, about the time series plot of the Google closing price, in general it shows an upward trend and potentially with non-constant, indicating that the series is non-stationary.  We check further using ACF plot and it confirmed that the data is non-stationary since there is a slow decay with significant autocorrelations persisting across many lags—characteristic of non-stationarity. 
+We then do differencing and create new ACF plot, this plot shows no significant correlations beyond the first lag. This transformation help us removes the trend, stabilizes the mean, and confirms that the series has been made stationary,making it suitable for further time series modeling.
+
+### Part 2 (9.7) Consider aus_airpassengers, the total number of passengers (in millions) from Australian air carriers for the period 1970-2011.
+```{r}
+library(fable)
+library(forecast)
+library(ggplot2)
+library(feasts)
+data("aus_airpassengers")
+autoplot(aus_airpassengers, Passengers) +
+  labs(title = "Number of passenger from Australian air 1970-2011",
+       y = "Close")
+
+aus_airpassengers |> ACF(Passengers) |>
+  autoplot() + labs(subtitle = "Number of passenger from Australian air 1970-2011")
+aus_airpassengers |> PACF(Passengers) |>
+  autoplot() + labs(subtitle = "Number of passenger from Australian air 1970-2011")
+```
+#### a) Use ARIMA() to find an appropriate ARIMA model. What model was selected. Check that the residuals look like white noise. Plot forecasts for the next 10 periods.
+```{r}
+fit <- aus_airpassengers |>
+  model(ARIMA(Passengers))
+report(fit)
+
+fit |>
+  gg_tsresiduals()
+
+fit |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air")
+```
+
+#### b) Write the model in terms of the backshift operator.
+From the result in part a) we find the optimal model is ARIMA(0,2,1) where p=0,d=2, and q=1.
+
+* The second differencing operator can be written as: (1-B)^2 = 1-2B-B^2
+* MA(1) can be written as: (1+θ1B)εt where θ1=−0.8963
+* Thus, ARIMA (0,2,1) can be written in backshift operator notation as:
+(1-B)^2yt=(1−0.8963B)εt
+(1-2B+B^2)yt=(1−0.8963B)εt
+
+#### c) Plot forecasts from an ARIMA(0,1,0) model with drift and compare these to part a.
+```{r}
+fit2 <- aus_airpassengers |>
+  model(ARIMA(Passengers ~ pdq(0,1,0) + 1 ))
+report(fit2)
+
+fit2 |>
+  gg_tsresiduals()
+
+fit2 |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air ARIMA(0,1,0)")
+```
+ARIMA(0,2,1) slightly outperforms ARIMA(0,1,0) in terms of model fit, because it has higher log-likelihood (-97.02 vs. -98.16), lower AIC (198.04 vs. 200.31), and lower BIC (201.65 vs. 203.97). However, both models has very similar result in residual variances , with ARIMA(0,2,1) at 4.308 and ARIMA(0,1,0) at 4.271. If we see on the residual plot, ARIMA(0,1,0) has residuals that are more normally distributed and stable.
+
+Overall, ARIMA(0,1,0) can also be better choice for this dataset due to its simplicity, stable residuals. However, i believe the package choose ARIMA(0,2,1), because there is a need to model quadratic trends or short-term autocorrelation that need to be investigated further.
+
+#### d) Plot forecasts from an ARIMA(2,1,2) model with drift and compare these to parts a and c. Remove the constant and see what happens.
+```{r}
+# Fit ARIMA(2,1,2) model with drift
+fit3 <- aus_airpassengers |>
+  model(ARIMA(Passengers ~ pdq(2,1,2) + 1))
+report(fit3)
+
+fit3 |>
+  gg_tsresiduals()
+
+fit3 |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air ARIMA(2,1,2) model with drift")
+```
+ARIMA(2,1,2) w/ Drift has the lowest residual variance at 4.031 and can captures complex patterns with autoregressive and moving average terms but has the highest AIC (204.46) and BIC (215.43).
+ARIMA(0,2,1) balances fit and simplicity with lower AIC (198.04) and BIC (201.65), though its residual variance is is slightly higher at 4.308.
+ARIMA(0,1,0) w/ Drift is the simplest model, with moderate fit metrics and stable residuals, ideal for capturing linear trends.
+
+In general, we can use ARIMA(0,2,1) for a good balance of fit and simplicity or ARIMA(2,1,2) w/ Drift if we want to capture more complex relationship and use ARIMA(0,1,0) as a baseline model.
+
+```{r}
+# Fit ARIMA(2,1,2) model without drift
+fit4 <- aus_airpassengers |>
+  model(ARIMA(Passengers ~ pdq(2,1,2) + 0))
+report(fit4)
+
+fit4 |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air 1970-2011 (remove constant)")
+```
+The error "non-stationary AR part from CSS" occurs because the ARIMA(2,1,2) model without a constant fails to find a stable solution. This indicates that the ARIMA model we specified is unstable due to non-stationarity or poor parameter settings. Additionally, from our optimal model, ACF, and PACF, we can see that we need to do differencing d=2, since this Arima model d=1, it can also affect how the package responds to the results.
+
+#### e) Plot forecasts from an ARIMA(0,2,1) model with a constant. What happens?
+```{r}
+fit5 <- aus_airpassengers |>
+  model(ARIMA(Passengers ~ pdq(0,2,1) + 1))
+fit5 |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air ARIMA(0,2,1) model with a constant")
+
+fit6 <- aus_airpassengers |>
+  model(ARIMA(Passengers ~ pdq(0,2,1) + 0))
+fit6 |> forecast(h=10) |>
+  autoplot(aus_airpassengers) + labs(subtitle = "Number of passenger from Australian air ARIMA(0,2,1) model no constant")
+
+```
+From the result above, we received warning highlights that adding a constant to an ARIMA(0,2,1) model introduces a quadratic trend, which may lead to unrealistic forecasts unless our data truly proves such growth. The addition of constant allows for a steady upward trend in forecasts, but prediction intervals may widen over time due to cumulative uncertainty. On the other hand, Without the constant, forecasts would stabilize, but with it, the model assumes persistent growth. To fix this, we can consider remove the constant for more realistic forecasts.
+
+### Part 3 (9.15) Consider the number of Snowshoe Hare furs traded by the Hudson Bay Company between 1845 and 1935 (data set pelt).
+
+#### load "pelt" dataset from R
+```{r}
+data(pelt)
+```
+
+#### Produce a time plot of the time series.
+```{r}
+autoplot(pelt, Hare) +
+  labs(title = "Snowshoe Hare furs traded by the Hudson Bay Company between 1845 and 1935",
+       y = "Hare")
+```
+The time plot of Snowshoe Hare furs traded by the Hudson Bay Company from 1845 to 1935 above, shows a clear cyclical pattern, with it highest peak at around 1865, reaching a slightly over 150,000 but then it declines to near zero. This consistent rise and fall may indicate a strong relationship between the population cycles of the Snowshoe Hare and the fur trading activity during this given period.
+
+#### b. Assume you decide to fit the following model: where  εt is a white noise series. What sort of ARIMA model is this (i.e., what are p,d, and q)?
+
+This is a purely autoregressive (AR) model with p=4 because it only includes lagged values of yt and constant c.Thus, The model is an ARIMA(4, 0, 0).
+
+#### c. By examining the ACF and PACF of the data, explain why this model is appropriate
+```{r}
+pelt |> ACF(Hare) |>
+  autoplot() + labs(subtitle = "Snowshoe Hare furs traded by the Hudson Bay Company between 1845 and 1935")
+pelt |> PACF(Hare) |>
+  autoplot() + labs(subtitle = "Snowshoe Hare furs traded by the Hudson Bay Company between 1845 and 1935")
+```
+From the ACF and PACF plot above, we can see that
+1) The ACF plot shows significant autocorrelation at lags 1 to 4, indicating the presence of strong dependencies but it drops off gradually after lag 4, which is a characteristic of autoregressive processes (Not MA process, MA(0))
+2) PACF Plo shows significant spikes at lags 1 through 4 but after that the lags stays within the confidence bounds. This means that the dependencies in the data are well captured by including up to 4 autoregressive terms and confirm that AR(4) model is the suitable one.
+3) We don't require differencing because it is already stationary (d=0)
+
+Based on the insights above, the ARIMA(4,0,0) model is appropriate for this time series.
+
+#### d. Without using the forecast() function, calculate forecasts for the next three years (1936–1939).
+```{r}
+c <- 30993
+phi1 <- 0.82
+phi2 <- -0.29
+phi3 <- -0.01
+phi4 <- -0.22
+y1935 <- 15760
+y1934 <- 81660
+y1933 <- 89760
+y1932 <- 82110
+
+y1936 <- c + phi1 * y1935 + phi2 * y1934 + phi3 * y1933 + phi4 * y1932
+y1937 <- c + phi1 * y1936 + phi2 * y1935 + phi3 * y1934 + phi4 * y1933
+y1938 <- c + phi1 * y1937 + phi2 * y1936 + phi3 * y1935 + phi4 * y1934
+
+print('forecasts for the next three years (1936–1939):')
+cat("1936 =", y1936, "\n")
+cat("1937 =", y1937, "\n")
+cat("1938 =", y1938, "\n")
+```
+#### e. Now fit the model in R and obtain the forecasts using forecast(). How are they different from yours? Why?
+```{r}
+fit_pelt <- pelt |>
+  model(ARIMA(Hare ~ pdq(4,0,0) ))
+report(fit_pelt)
+fit_pelt |> forecast(h=3) 
+```
+
+It has significant difference of predicting value between manual and forecast() package, this can be from some reasons:
+1) In manual calculation, we assume that εt=0, while forcast() package don't
+2) Forecast() may maintain high precision, while manual calculation we rounded the value.
